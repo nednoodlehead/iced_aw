@@ -34,6 +34,7 @@ where
     Message: 'a + Clone,
 {
     roots: Vec<Item<'a, Message, Theme, Renderer>>,
+    on_press: Option<Message>,
     spacing: f32,
     padding: Padding,
     width: Length,
@@ -59,11 +60,12 @@ where
 
         Self {
             roots,
+            on_press: None,
             spacing: 0.0,
             padding: Padding::ZERO,
             width: Length::Shrink,
             height: Length::Shrink,
-            check_bounds_width: 50.0,
+            check_bounds_width: 0.0, // <-- YOU CAUSE THE THING
             draw_path: DrawPath::FakeHovering,
             scroll_speed: ScrollSpeed {
                 line: 60.0,
@@ -88,6 +90,11 @@ where
     /// Sets the spacing of the [`MenuBar`].
     pub fn spacing(mut self, spacing: f32) -> Self {
         self.spacing = spacing;
+        self
+    }
+    /// set the message to be sent when left clicked
+    pub fn on_press(mut self, on_press: Message) -> Self {
+        self.on_press = Some(on_press);
         self
     }
 
@@ -206,7 +213,7 @@ where
         let bar_bounds = layout.bounds();
 
         match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
                 if cursor.is_over(bar_bounds) {
                     bar.is_pressed = true;
                     Captured
@@ -214,7 +221,7 @@ where
                     Ignored
                 }
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)) => {
                 if cursor.is_over(bar_bounds) && bar.is_pressed {
                     bar.open = true;
                     bar.is_pressed = false;
@@ -229,9 +236,17 @@ where
                     Ignored
                 }
             }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                if cursor.is_over(bar_bounds) {
+                    if let Some(on_press) = self.on_press.clone() {
+                        shell.publish(on_press)
+                    }
+                }
+                Captured
+            }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if bar.open {
-                    if cursor.is_over(bar_bounds) {
+                    if cursor.is_over(layout.bounds()) {
                         for (i, l) in layout.children().enumerate() {
                             if cursor.is_over(l.bounds()) {
                                 bar.active_root = Some(i);

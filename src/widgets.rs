@@ -112,6 +112,10 @@ pub mod wrap;
 pub type Wrap<'a, Message, Direction, Theme, Renderer> =
     wrap::Wrap<'a, Message, Direction, Theme, Renderer>;
 
+// #[cfg(feature = "add_menu")]
+/// a menu that is right click to open, left click to produce message
+pub mod additional_menu;
+
 #[cfg(feature = "menu")]
 pub mod menu;
 

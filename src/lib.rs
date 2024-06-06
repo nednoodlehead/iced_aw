@@ -50,7 +50,6 @@ pub mod widgets;
 
 pub mod core;
 pub mod style;
-
 pub use iced::Element;
 
 /// Exports for all platforms that are not WASM32.
@@ -136,6 +135,7 @@ mod platform {
     #[cfg(feature = "split")]
     pub use {crate::style::SplitStyles, crate::widgets::split, split::Split};
 
+    pub use crate::widgets::additional_menu;
     #[doc(no_inline)]
     #[cfg(feature = "menu")]
     pub use crate::widgets::menu;

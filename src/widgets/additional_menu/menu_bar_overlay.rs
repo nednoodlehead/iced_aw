@@ -519,18 +519,16 @@ where
         let Some(menu_layouts) = lc.next().map(Layout::children) else {
             return false;
         }; // [menu_node...]
-
         for menu_layout in menu_layouts {
             // menu_node: Node{inf, [ slice_node, prescroll, offset_bounds, check_bounds ]}
             let mut mc = menu_layout.children();
             let _slice_layout = mc.next().unwrap();
             let prescroll = mc.next().unwrap().bounds();
-
             if prescroll.contains(cursor_position) {
                 return true;
             }
         }
-
+        // this conditon breaks the bar
         false
     }
 }
