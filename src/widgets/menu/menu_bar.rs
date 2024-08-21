@@ -9,7 +9,7 @@ use iced::{
     advanced::{
         layout::{Limits, Node},
         mouse, overlay, renderer,
-        widget::{tree, Tree},
+        widget::{tree, Operation, Tree},
         Clipboard, Layout, Shell, Widget,
     },
     alignment, event, Element, Event, Length, Padding, Rectangle, Size,
@@ -17,6 +17,7 @@ use iced::{
 
 use super::{common::*, flex, menu_bar_overlay::MenuBarOverlay, menu_tree::*};
 use crate::style::menu_bar::*;
+pub use crate::style::status::{Status, StyleFn};
 
 #[derive(Default)]
 pub(super) struct MenuBarState {
@@ -29,7 +30,7 @@ pub(super) struct MenuBarState {
 #[must_use]
 pub struct MenuBar<'a, Message, Theme, Renderer>
 where
-    Theme: StyleSheet,
+    Theme: Catalog,
     Renderer: renderer::Renderer,
     Message: 'a + Clone,
 {
@@ -41,11 +42,11 @@ where
     check_bounds_width: f32,
     draw_path: DrawPath,
     scroll_speed: ScrollSpeed,
-    style: Theme::Style,
+    class: Theme::Class<'a>,
 }
 impl<'a, Message, Theme, Renderer> MenuBar<'a, Message, Theme, Renderer>
 where
-    Theme: StyleSheet,
+    Theme: Catalog,
     Renderer: renderer::Renderer,
     Message: 'a + Clone,
 {
@@ -69,7 +70,7 @@ where
                 line: 60.0,
                 pixel: 1.0,
             },
-            style: Theme::Style::default(),
+            class: Theme::default(),
         }
     }
 
@@ -115,16 +116,25 @@ where
         self
     }
 
-    /// Sets the style variant of this [`MenuBar`].
-    pub fn style(mut self, style: impl Into<Theme::Style>) -> Self {
-        self.style = style.into();
+    /// Sets the style of the [`Badge`].
+    pub fn style(mut self, style: impl Fn(&Theme, Status) -> Style + 'a) -> Self
+    where
+        Theme::Class<'a>: From<StyleFn<'a, Theme, Style>>,
+    {
+        self.class = (Box::new(style) as StyleFn<'a, Theme, Style>).into();
+        self
+    }
+
+    /// Sets the class of the input of the [`Badge`].
+    pub fn class(mut self, class: impl Into<Theme::Class<'a>>) -> Self {
+        self.class = class.into();
         self
     }
 }
 impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
     for MenuBar<'a, Message, Theme, Renderer>
 where
-    Theme: StyleSheet,
+    Theme: Catalog,
     Renderer: renderer::Renderer,
     Message: 'a + Clone,
 {
@@ -216,7 +226,7 @@ where
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 if cursor.is_over(bar_bounds) && bar.is_pressed {
-                    bar.open = true;
+                    bar.open = !bar.open;
                     bar.is_pressed = false;
                     for (i, l) in layout.children().enumerate() {
                         if cursor.is_over(l.bounds()) {
@@ -251,6 +261,24 @@ where
         .merge(status)
     }
 
+    fn operate(
+        &self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn Operation<()>,
+    ) {
+        operation.container(None, layout.bounds(), &mut |operation| {
+            self.roots
+                .iter() // [Item...]
+                .zip(tree.children.iter_mut()) // [item_tree...]
+                .zip(layout.children()) // [widget_node...]
+                .for_each(|((child, state), layout)| {
+                    child.operate(state, layout, renderer, operation);
+                });
+        });
+    }
+
     fn mouse_interaction(
         &self,
         tree: &Tree,
@@ -280,7 +308,7 @@ where
         mut cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        let styling = theme.appearance(&self.style);
+        let styling = theme.style(&self.class, Status::Active);
         renderer.fill_quad(
             renderer::Quad {
                 bounds: pad_rectangle(layout.bounds(), styling.bar_background_expand),
@@ -349,7 +377,7 @@ where
                     check_bounds_width: self.check_bounds_width,
                     draw_path: &self.draw_path,
                     scroll_speed: self.scroll_speed,
-                    style: &self.style,
+                    class: &self.class,
                 }
                 .overlay_element(),
             )
@@ -361,8 +389,8 @@ where
 impl<'a, Message, Theme, Renderer> From<MenuBar<'a, Message, Theme, Renderer>>
     for Element<'a, Message, Theme, Renderer>
 where
-    Message: 'a + Clone,
-    Theme: 'a + StyleSheet,
+    Message: 'a,
+    Theme: 'a + Catalog,
     Renderer: 'a + renderer::Renderer,
 {
     fn from(value: MenuBar<'a, Message, Theme, Renderer>) -> Self {

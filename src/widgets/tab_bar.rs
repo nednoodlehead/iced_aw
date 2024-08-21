@@ -26,7 +26,10 @@ use iced::{
 
 use std::marker::PhantomData;
 
-pub use crate::style::tab_bar::{Appearance, StyleSheet};
+pub use crate::style::{
+    tab_bar::{self, Catalog, Style},
+    Status, StyleFn,
+};
 pub use tab_label::TabLabel;
 
 /// The default icon size.
@@ -67,10 +70,10 @@ const DEFAULT_SPACING: f32 = 0.0;
 /// .set_active_tab(&TabId::One);
 /// ```
 #[allow(missing_debug_implementations)]
-pub struct TabBar<Message, TabId, Theme = iced::Theme, Renderer = iced::Renderer>
+pub struct TabBar<'a, Message, TabId, Theme = iced::Theme, Renderer = iced::Renderer>
 where
     Renderer: renderer::Renderer + iced::advanced::text::Renderer,
-    Theme: StyleSheet,
+    Theme: Catalog,
     TabId: Eq + Clone,
 {
     /// The index of the currently active tab.
@@ -106,7 +109,7 @@ where
     /// The optional text font of the [`TabBar`].
     text_font: Option<Font>,
     /// The style of the [`TabBar`].
-    style: <Theme as StyleSheet>::Style,
+    class: <Theme as Catalog>::Class<'a>,
     /// Where the icon is placed relative to text
     position: Position,
     #[allow(clippy::missing_docs_in_private_items)]
@@ -127,10 +130,10 @@ pub enum Position {
     Left,
 }
 
-impl<Message, TabId, Theme, Renderer> TabBar<Message, TabId, Theme, Renderer>
+impl<'a, Message, TabId, Theme, Renderer> TabBar<'a, Message, TabId, Theme, Renderer>
 where
     Renderer: renderer::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
-    Theme: StyleSheet,
+    Theme: Catalog,
     TabId: Eq + Clone,
 {
     /// Creates a new [`TabBar`] with the index of the selected tab and a specified
@@ -175,7 +178,7 @@ where
             spacing: DEFAULT_SPACING,
             font: None,
             text_font: None,
-            style: <Theme as StyleSheet>::Style::default(),
+            class: <Theme as Catalog>::default(),
             position: Position::default(),
             _renderer: PhantomData,
         }
@@ -325,8 +328,18 @@ where
 
     /// Sets the style of the [`TabBar`].
     #[must_use]
-    pub fn style(mut self, style: <Theme as StyleSheet>::Style) -> Self {
-        self.style = style;
+    pub fn style(mut self, style: impl Fn(&Theme, Status) -> Style + 'a) -> Self
+    where
+        <Theme as Catalog>::Class<'a>: From<StyleFn<'a, Theme, Style>>,
+    {
+        self.class = (Box::new(style) as StyleFn<'a, Theme, Style>).into();
+        self
+    }
+
+    /// Sets the class of the input of the [`TabBar`].
+    #[must_use]
+    pub fn class(mut self, class: impl Into<<Theme as Catalog>::Class<'a>>) -> Self {
+        self.class = class.into();
         self
     }
 
@@ -338,11 +351,11 @@ where
     }
 }
 
-impl<Message, TabId, Theme, Renderer> Widget<Message, Theme, Renderer>
-    for TabBar<Message, TabId, Theme, Renderer>
+impl<'a, Message, TabId, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for TabBar<'a, Message, TabId, Theme, Renderer>
 where
     Renderer: renderer::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
-    Theme: StyleSheet + text::StyleSheet,
+    Theme: Catalog + text::Catalog,
     TabId: Eq + Clone,
 {
     fn size(&self) -> Size<Length> {
@@ -358,13 +371,13 @@ where
         where
             Renderer: iced::advanced::text::Renderer,
             Renderer::Font: From<Font>,
-            Theme: iced::widget::text::StyleSheet,
+            Theme: iced::widget::text::Catalog,
         {
             Text::<Theme, Renderer>::new(icon.to_string())
                 .size(size)
                 .font(font.unwrap_or_default())
-                .horizontal_alignment(alignment::Horizontal::Center)
-                .vertical_alignment(alignment::Vertical::Center)
+                .align_x(alignment::Horizontal::Center)
+                .align_y(alignment::Vertical::Center)
                 .shaping(iced::advanced::text::Shaping::Advanced)
                 .width(Length::Shrink)
         }
@@ -377,13 +390,12 @@ where
         where
             Renderer: iced::advanced::text::Renderer,
             Renderer::Font: From<Font>,
-            Theme: iced::widget::text::StyleSheet,
+            Theme: iced::widget::text::Catalog,
         {
             Text::<Theme, Renderer>::new(text)
                 .size(size)
                 .font(font.unwrap_or_default())
-                .horizontal_alignment(alignment::Horizontal::Center)
-                .vertical_alignment(alignment::Vertical::Center)
+                .align_x(alignment::Horizontal::Center)
                 .shaping(text::Shaping::Advanced)
                 .width(Length::Shrink)
         }
@@ -396,16 +408,16 @@ where
                     .push(
                         match tab_label {
                             TabLabel::Icon(icon) => Column::new()
-                                .align_items(Alignment::Center)
+                                .align_x(Alignment::Center)
                                 .push(layout_icon(icon, self.icon_size + 1.0, self.font)),
 
                             TabLabel::Text(text) => Column::new()
                                 .padding(5.0)
-                                .align_items(Alignment::Center)
+                                .align_x(Alignment::Center)
                                 .push(layout_text(text, self.text_size + 1.0, self.text_font)),
 
                             TabLabel::IconText(icon, text) => {
-                                let mut column = Column::new().align_items(Alignment::Center);
+                                let mut column = Column::new().align_x(Alignment::Center);
 
                                 match self.position {
                                     Position::Top => {
@@ -424,7 +436,7 @@ where
                                     Position::Right => {
                                         column = column.push(
                                             Row::new()
-                                                .align_items(Alignment::Center)
+                                                .align_y(Alignment::Center)
                                                 .push(layout_text(
                                                     text,
                                                     self.text_size + 1.0,
@@ -440,7 +452,7 @@ where
                                     Position::Left => {
                                         column = column.push(
                                             Row::new()
-                                                .align_items(Alignment::Center)
+                                                .align_y(Alignment::Center)
                                                 .push(layout_icon(
                                                     icon,
                                                     self.icon_size + 1.0,
@@ -474,7 +486,7 @@ where
                         .width(self.tab_width)
                         .height(self.height),
                     )
-                    .align_items(Alignment::Center)
+                    .align_y(Alignment::Center)
                     .padding(self.padding)
                     .width(self.tab_width);
 
@@ -483,7 +495,7 @@ where
                         Row::new()
                             .width(Length::Fixed(self.close_size * 1.3 + 1.0))
                             .height(Length::Fixed(self.close_size * 1.3 + 1.0))
-                            .align_items(Alignment::Center),
+                            .align_y(Alignment::Center),
                     );
                 }
 
@@ -492,7 +504,7 @@ where
             .width(self.width)
             .height(self.height)
             .spacing(self.spacing)
-            .align_items(Alignment::Center);
+            .align_y(Alignment::Center);
 
         let element: Element<Message, Theme, Renderer> = Element::new(row);
         let tab_tree = if let Some(child_tree) = tree.children.get_mut(0) {
@@ -541,8 +553,8 @@ where
                             self.on_close
                                 .as_ref()
                                 .filter(|_on_close| {
-                                    let tab_layout = layout.children().nth(new_selected).expect("Native: Layout should have a tab layout at the selected index");
-                                    let cross_layout = tab_layout.children().nth(1).expect("Native: Layout should have a close layout");
+                                    let tab_layout = layout.children().nth(new_selected).expect("widgets: Layout should have a tab layout at the selected index");
+                                    let cross_layout = tab_layout.children().nth(1).expect("widgets: Layout should have a close layout");
 
                                     cursor.position().map_or(false, |pos| cross_layout.bounds().contains(pos) )
                                 })
@@ -603,9 +615,9 @@ where
         let children = layout.children();
         let is_mouse_over = cursor.position().map_or(false, |pos| bounds.contains(pos));
         let style_sheet = if is_mouse_over {
-            theme.hovered(&self.style, false)
+            tab_bar::Catalog::style(theme, &self.class, Status::Hovered)
         } else {
-            theme.active(&self.style, false)
+            tab_bar::Catalog::style(theme, &self.class, Status::Disabled)
         };
 
         if bounds.intersects(viewport) {
@@ -632,7 +644,7 @@ where
                 layout,
                 self.position,
                 theme,
-                &self.style,
+                &self.class,
                 i == self.get_active_tab_idx(),
                 cursor,
                 (self.font.unwrap_or(BOOTSTRAP_FONT), self.icon_size),
@@ -656,7 +668,7 @@ fn draw_tab<Theme, Renderer>(
     layout: Layout<'_>,
     position: Position,
     theme: &Theme,
-    style: &<Theme as StyleSheet>::Style,
+    class: &<Theme as Catalog>::Class<'_>,
     is_selected: bool,
     cursor: Cursor,
     icon_data: (Font, f32),
@@ -665,7 +677,7 @@ fn draw_tab<Theme, Renderer>(
     viewport: &Rectangle,
 ) where
     Renderer: renderer::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
-    Theme: StyleSheet + text::StyleSheet,
+    Theme: Catalog + text::Catalog,
 {
     fn icon_bound_rectangle(item: Option<Layout<'_>>) -> Rectangle {
         item.expect("Graphics: Layout should have an icons layout for an IconText")
@@ -679,10 +691,13 @@ fn draw_tab<Theme, Renderer>(
 
     let bounds = layout.bounds();
     let is_mouse_over = cursor.position().map_or(false, |pos| bounds.contains(pos));
+
     let style = if is_mouse_over {
-        theme.hovered(style, is_selected)
+        tab_bar::Catalog::style(theme, class, Status::Hovered)
+    } else if is_selected {
+        tab_bar::Catalog::style(theme, class, Status::Active)
     } else {
-        theme.active(style, is_selected)
+        tab_bar::Catalog::style(theme, class, Status::Disabled)
     };
 
     let mut children = layout.children();
@@ -712,7 +727,7 @@ fn draw_tab<Theme, Renderer>(
 
             renderer.fill_text(
                 iced::advanced::text::Text {
-                    content: &icon.to_string(),
+                    content: icon.to_string(),
                     bounds: Size::new(icon_bounds.width, icon_bounds.height),
                     size: Pixels(icon_data.1),
                     font: icon_data.0,
@@ -732,7 +747,7 @@ fn draw_tab<Theme, Renderer>(
 
             renderer.fill_text(
                 iced::advanced::text::Text {
-                    content: &text[..],
+                    content: text.to_string(),
                     bounds: Size::new(text_bounds.width, text_bounds.height),
                     size: Pixels(text_data.1),
                     font: text_data.0,
@@ -779,7 +794,7 @@ fn draw_tab<Theme, Renderer>(
 
             renderer.fill_text(
                 iced::advanced::text::Text {
-                    content: &icon.to_string(),
+                    content: icon.to_string(),
                     bounds: Size::new(icon_bounds.width, icon_bounds.height),
                     size: Pixels(icon_data.1),
                     font: icon_data.0,
@@ -795,7 +810,7 @@ fn draw_tab<Theme, Renderer>(
 
             renderer.fill_text(
                 iced::advanced::text::Text {
-                    content: &text[..],
+                    content: text.to_string(),
                     bounds: Size::new(text_bounds.width, text_bounds.height),
                     size: Pixels(text_data.1),
                     font: text_data.0,
@@ -817,14 +832,14 @@ fn draw_tab<Theme, Renderer>(
 
         renderer.fill_text(
             iced::advanced::text::Text {
-                content: &icon_to_string(Bootstrap::X),
+                content: icon_to_string(Bootstrap::X),
                 bounds: Size::new(cross_bounds.width, cross_bounds.height),
                 size: Pixels(close_size + if is_mouse_over_cross { 1.0 } else { 0.0 }),
                 font: BOOTSTRAP_FONT,
                 horizontal_alignment: Horizontal::Center,
                 vertical_alignment: Vertical::Center,
                 line_height: LineHeight::Relative(1.3),
-                shaping: iced::advanced::text::Shaping::Basic,
+                shaping: iced::advanced::text::Shaping::Advanced,
             },
             Point::new(cross_bounds.center_x(), cross_bounds.center_y()),
             style.text_color,
@@ -850,15 +865,15 @@ fn draw_tab<Theme, Renderer>(
     };
 }
 
-impl<'a, Message, TabId, Theme, Renderer> From<TabBar<Message, TabId, Theme, Renderer>>
+impl<'a, Message, TabId, Theme, Renderer> From<TabBar<'a, Message, TabId, Theme, Renderer>>
     for Element<'a, Message, Theme, Renderer>
 where
     Renderer: 'a + renderer::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
-    Theme: 'a + StyleSheet + text::StyleSheet,
+    Theme: 'a + Catalog + text::Catalog,
     Message: 'a,
     TabId: 'a + Eq + Clone,
 {
-    fn from(tab_bar: TabBar<Message, TabId, Theme, Renderer>) -> Self {
+    fn from(tab_bar: TabBar<'a, Message, TabId, Theme, Renderer>) -> Self {
         Element::new(tab_bar)
     }
 }

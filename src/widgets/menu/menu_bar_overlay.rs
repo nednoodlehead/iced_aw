@@ -10,18 +10,18 @@ use iced::{
     advanced::{
         layout::{Limits, Node},
         mouse, overlay, renderer,
-        widget::Tree,
+        widget::{Operation, Tree},
         Clipboard, Layout, Shell,
     },
     event, Event, Point, Rectangle, Size, Vector,
 };
 
 use super::{common::*, menu_bar::MenuBarState, menu_tree::*};
-use crate::style::menu_bar::*;
+use crate::style::{menu_bar::*, Status};
 
 pub(super) struct MenuBarOverlay<'a, 'b, Message, Theme, Renderer>
 where
-    Theme: StyleSheet,
+    Theme: Catalog,
     Renderer: renderer::Renderer,
     Message: 'a + Clone,
 {
@@ -35,11 +35,11 @@ where
     pub(super) check_bounds_width: f32,
     pub(super) draw_path: &'b DrawPath,
     pub(super) scroll_speed: ScrollSpeed,
-    pub(super) style: &'b Theme::Style,
+    pub(super) class: &'b Theme::Class<'a>,
 }
 impl<'a, 'b, Message, Theme, Renderer> MenuBarOverlay<'a, 'b, Message, Theme, Renderer>
 where
-    Theme: StyleSheet,
+    Theme: Catalog,
     Renderer: renderer::Renderer,
     Message: 'a + Clone,
 {
@@ -50,7 +50,7 @@ where
 impl<'a, 'b, Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
     for MenuBarOverlay<'a, 'b, Message, Theme, Renderer>
 where
-    Theme: StyleSheet,
+    Theme: Catalog,
     Renderer: renderer::Renderer,
     Message: 'a + Clone,
 {
@@ -80,7 +80,7 @@ where
         let active_tree = &mut self.tree.children[active]; // item_tree: Tree{ stateless, [ widget_tree, menu_tree ] }
         let parent_bounds = self.init_root_bounds[active] + translation;
 
-        fn rec<Message: std::clone::Clone, Theme: StyleSheet, Renderer: renderer::Renderer>(
+        fn rec<Message, Theme: Catalog, Renderer: renderer::Renderer>(
             renderer: &Renderer,
             item: &Item<'_, Message, Theme, Renderer>,
             tree: &mut Tree,
@@ -213,7 +213,7 @@ where
         let mut prev_bounds_list = vec![bar_bounds];
 
         #[rustfmt::skip]
-        fn rec<'a, 'b, Message: std::clone::Clone, Theme: StyleSheet, Renderer: renderer::Renderer>(
+        fn rec<'a, 'b, Message, Theme: Catalog, Renderer: renderer::Renderer>(
             tree: &mut Tree,
             item: &mut Item<'a, Message, Theme, Renderer>,
             event: &Event,
@@ -363,13 +363,7 @@ where
         let active_root = &self.roots[active];
         let active_tree = &self.tree.children[active];
 
-        fn rec<
-            'a,
-            'b,
-            Message: std::clone::Clone,
-            Theme: StyleSheet,
-            Renderer: renderer::Renderer,
-        >(
+        fn rec<'a, 'b, Message, Theme: Catalog, Renderer: renderer::Renderer>(
             tree: &Tree,
             item: &Item<'a, Message, Theme, Renderer>,
             layout_iter: &mut impl Iterator<Item = Layout<'b>>,
@@ -413,6 +407,85 @@ where
         )
     }
 
+    fn operate(
+        &mut self,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn Operation<()>,
+    ) {
+        let bar = self.tree.state.downcast_ref::<MenuBarState>();
+        let Some(active) = bar.active_root else {
+            return;
+        };
+
+        // let viewport = layout.bounds();
+        let mut lc = layout.children();
+        let _bar_bounds = lc.next().unwrap().bounds();
+        let _roots_layout = lc.next().unwrap();
+
+        // let parent_bounds = roots_layout.children().nth(active).unwrap().bounds();
+        let menu_layouts_layout = lc.next().unwrap(); // Node{0, [menu_node...]}
+        let mut menu_layouts = menu_layouts_layout.children(); // [menu_node...]
+
+        let active_root = &self.roots[active];
+        let active_tree = &mut self.tree.children[active];
+
+        fn rec<'a, 'b, Message, Theme: Catalog, Renderer: renderer::Renderer>(
+            tree: &mut Tree,
+            item: &Item<'a, Message, Theme, Renderer>,
+            layout_iter: &mut impl Iterator<Item = Layout<'b>>,
+            renderer: &Renderer,
+            operation: &mut dyn Operation<()>,
+        ) {
+            let menu = item.menu.as_ref().expect("No menu defined in this item");
+            let menu_tree = &mut tree.children[1];
+
+            let Some(menu_layout) = layout_iter.next() else {
+                return;
+            };
+
+            menu.operate(menu_tree, menu_layout, renderer, operation);
+
+            operation.container(None, menu_layout.bounds(), &mut |operation| {
+                menu.items
+                    .iter() // [Item...]
+                    .zip(menu_tree.children.iter_mut()) // [item_tree...] // [widget_node...]
+                    .for_each(|(child, state)| {
+                        rec(state, child, layout_iter, renderer, operation);
+                    });
+            });
+        }
+
+        rec(
+            active_tree,
+            active_root,
+            &mut menu_layouts,
+            renderer,
+            operation,
+        );
+    }
+
+    fn overlay<'c>(
+        &'c mut self,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+    ) -> Option<overlay::Element<'c, Message, Theme, Renderer>> {
+        let bar = self.tree.state.downcast_ref::<MenuBarState>();
+        let active = bar.active_root?;
+        let mut lc = layout.children();
+        let _bar_bounds = lc.next()?.bounds();
+        let _roots_layout = lc.next()?;
+        let menu_layouts_layout = lc.next()?; // Node{0, [menu_node...]}
+        let mut menu_layouts = menu_layouts_layout.children(); // [menu_node...]
+        let active_root = &mut self.roots[active];
+        let active_tree = &mut self.tree.children[active];
+        let menu = active_root.menu.as_mut()?;
+        let menu_tree = &mut active_tree.children[1];
+        let menu_layout = menu_layouts.next()?;
+
+        menu.overlay(menu_tree, menu_layout, renderer, Vector::ZERO)
+    }
+
     fn draw(
         &self,
         renderer: &mut Renderer,
@@ -438,13 +511,8 @@ where
         let active_root = &self.roots[active];
         let active_tree = &self.tree.children[active];
 
-        fn rec<
-            'a,
-            'b,
-            Message: std::clone::Clone,
-            Theme: StyleSheet,
-            Renderer: renderer::Renderer,
-        >(
+        fn rec<'a, 'b, Message, Theme: Catalog, Renderer: renderer::Renderer>(
+>>>>>>> upstream/main
             draw_path: &DrawPath,
             tree: &Tree,
             item: &Item<'a, Message, Theme, Renderer>,
@@ -453,7 +521,7 @@ where
             renderer: &mut Renderer,
             theme: &Theme,
             style: &renderer::Style,
-            theme_style: &Theme::Style,
+            theme_style: &Style,
             viewport: &Rectangle,
         ) {
             let menu = item.menu.as_ref().expect("No menu defined in this item");
@@ -498,6 +566,8 @@ where
             }
         }
 
+        let theme_style = theme.style(self.class, Status::Active);
+
         rec(
             self.draw_path,
             active_tree,
@@ -507,7 +577,7 @@ where
             renderer,
             theme,
             style,
-            self.style,
+            &theme_style,
             &viewport,
         );
     }

@@ -23,6 +23,13 @@ pub mod number_input;
 pub type NumberInput<'a, T, Message, Theme, Renderer> =
     number_input::NumberInput<'a, T, Message, Theme, Renderer>;
 
+#[cfg(feature = "typed_input")]
+pub mod typed_input;
+#[cfg(feature = "typed_input")]
+/// A field that can only be filled with a specific type.
+pub type TypedInput<'a, T, Message, Theme, Renderer> =
+    typed_input::TypedInput<'a, T, Message, Theme, Renderer>;
+
 #[cfg(feature = "card")]
 pub mod card;
 #[cfg(feature = "card")]
@@ -33,12 +40,6 @@ pub type Card<'a, Message, Theme, Renderer> = card::Card<'a, Message, Theme, Ren
 pub mod color_picker;
 #[cfg(feature = "color_picker")]
 pub use color_picker::ColorPicker;
-
-#[cfg(feature = "cupertino")]
-/// Cupertino-style widgets
-pub mod cupertino;
-#[cfg(feature = "cupertino")]
-pub use crate::widgets::cupertino::cupertino_spinner::CupertinoSpinner;
 
 #[cfg(feature = "date_picker")]
 pub mod date_picker;
@@ -54,13 +55,6 @@ pub type SelectionList<'a, T, Message, Theme, Renderer> =
 #[cfg(feature = "selection_list")]
 pub use selection_list::List;
 
-#[cfg(feature = "floating_element")]
-pub mod floating_element;
-#[cfg(feature = "floating_element")]
-/// A floating element floating over some content.
-pub type FloatingElement<'a, Message, Theme, Renderer> =
-    floating_element::FloatingElement<'a, Message, Theme, Renderer>;
-
 #[cfg(feature = "grid")]
 pub mod grid;
 #[cfg(feature = "grid")]
@@ -69,23 +63,12 @@ pub type Grid<'a, Message, Theme, Renderer> = grid::Grid<'a, Message, Theme, Ren
 #[cfg(feature = "grid")]
 pub use grid::GridRow;
 
-#[cfg(feature = "modal")]
-pub mod modal;
-#[cfg(feature = "modal")]
-/// A modal content as an overlay.
-pub type Modal<'a, Message, Theme, Renderer> = modal::Modal<'a, Message, Theme, Renderer>;
-
-#[cfg(feature = "split")]
-pub mod split;
-#[cfg(feature = "split")]
-/// A split can divide the available space by half to display two different elements.
-pub type Split<'a, Message, Theme, Renderer> = split::Split<'a, Message, Theme, Renderer>;
-
 #[cfg(feature = "tab_bar")]
 pub mod tab_bar;
 #[cfg(feature = "tab_bar")]
 /// A tab bar to show tabs.
-pub type TabBar<Message, TabId, Theme, Renderer> = tab_bar::TabBar<Message, TabId, Theme, Renderer>;
+pub type TabBar<'a, Message, TabId, Theme, Renderer> =
+    tab_bar::TabBar<'a, Message, TabId, Theme, Renderer>;
 
 #[cfg(feature = "tab_bar")]
 pub use tab_bar::TabLabel;
@@ -136,13 +119,6 @@ pub mod context_menu;
 pub type ContextMenu<'a, Overlay, Message, Renderer> =
     context_menu::ContextMenu<'a, Overlay, Message, Renderer>;
 
-#[cfg(feature = "segmented_button")]
-pub mod segmented_button;
-#[cfg(feature = "segmented_button")]
-/// A badge for color highlighting small information.
-pub type SegmentedButton<'a, Message, Theme, Renderer> =
-    segmented_button::SegmentedButton<'a, Message, Theme, Renderer>;
-
 #[cfg(feature = "slide_bar")]
 pub mod slide_bar;
 #[cfg(feature = "slide_bar")]
@@ -154,3 +130,14 @@ pub mod drop_down;
 /// A drop down menu
 pub type DropDown<'a, Overlay, Message, Renderer> =
     drop_down::DropDown<'a, Overlay, Message, Renderer>;
+
+#[cfg(feature = "sidebar")]
+pub mod sidebar;
+#[cfg(feature = "sidebar")]
+/// A sidebar to show tabs on the side.
+pub type Sidebar<'a, Message, TabId, Theme, Renderer> =
+    sidebar::Sidebar<'a, Message, TabId, Theme, Renderer>;
+#[cfg(feature = "sidebar")]
+/// A [`SidebarWithContent`] widget for showing a [`Sidebar`](super::sidebar::SideBar)
+pub type SidebarWithContent<'a, Message, TabId, Theme, Renderer> =
+    sidebar::SidebarWithContent<'a, Message, TabId, Theme, Renderer>;

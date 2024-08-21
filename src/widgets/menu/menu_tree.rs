@@ -12,10 +12,12 @@
 
 use super::common::*;
 use super::flex;
+use iced::advanced::overlay::Group;
+use iced::advanced::widget::Operation;
 use iced::{
     advanced::{
         layout::{Layout, Limits, Node},
-        mouse, renderer,
+        mouse, overlay, renderer,
         widget::tree::{self, Tree},
         Clipboard, Shell,
     },
@@ -70,7 +72,7 @@ impl Default for MenuState {
             active: None,
             slice: MenuSlice {
                 start_index: 0,
-                end_index: usize::MAX,
+                end_index: usize::MAX - 1,
                 lower_bound_rel: 0.0,
                 upper_bound_rel: f32::MAX,
             },
@@ -83,7 +85,7 @@ impl Default for MenuState {
 #[must_use]
 pub struct Menu<'a, Message, Theme, Renderer>
 where
-    Theme: StyleSheet,
+    Theme: Catalog,
     Renderer: renderer::Renderer,
     Message: 'a + Clone,
 {
@@ -98,7 +100,7 @@ where
 }
 impl<'a, Message, Theme, Renderer> Menu<'a, Message, Theme, Renderer>
 where
-    Theme: StyleSheet,
+    Theme: Catalog,
     Renderer: renderer::Renderer,
     Message: 'a + Clone,
 {
@@ -156,7 +158,7 @@ where
 }
 impl<'a, Message, Theme, Renderer> Menu<'a, Message, Theme, Renderer>
 where
-    Theme: StyleSheet,
+    Theme: Catalog,
     Renderer: renderer::Renderer,
     Message: 'a + Clone,
 {
@@ -236,7 +238,7 @@ where
 
         let offset_bounds = Rectangle::new(offset_position, offset_size);
         let children_bounds = Rectangle::new(children_position, children_size);
-        let check_bounds = pad_rectangle(children_bounds, [check_bounds_width; 4].into());
+        let check_bounds = pad_rectangle(children_bounds, check_bounds_width.into());
 
         let menu_state = tree.state.downcast_mut::<MenuState>();
 
@@ -395,6 +397,62 @@ where
         .merge(status)
     }
 
+    pub(super) fn operate(
+        &self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn Operation<()>,
+    ) {
+        let mut lc = layout.children();
+        let slice_layout = lc.next().unwrap();
+        let _prescroll = lc.next().unwrap().bounds();
+        let _offset_bounds = lc.next().unwrap().bounds();
+        let _check_bounds = lc.next().unwrap().bounds();
+
+        let menu_state = tree.state.downcast_mut::<MenuState>();
+        let slice = &menu_state.slice;
+
+        operation.container(None, layout.bounds(), &mut |operation| {
+            self.items[slice.start_index..=slice.end_index] // [item...]
+                .iter()
+                .zip(tree.children[slice.start_index..=slice.end_index].iter_mut()) // [item_tree...]
+                .zip(slice_layout.children())
+                .for_each(|((child, state), layout)| {
+                    child.operate(state, layout, renderer, operation);
+                });
+        });
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        let mut lc = layout.children();
+        let slice_layout = lc.next()?;
+        let _prescroll = lc.next()?.bounds();
+        let _offset_bounds = lc.next()?.bounds();
+        let _check_bounds = lc.next()?.bounds();
+
+        let menu_state = tree.state.downcast_mut::<MenuState>();
+        let slice = &menu_state.slice;
+
+        let children = self.items[slice.start_index..=slice.end_index] // [item...]
+            .iter_mut()
+            .zip(tree.children[slice.start_index..=slice.end_index].iter_mut()) // [item_tree...]
+            .zip(slice_layout.children())
+            .filter_map(|((child, state), layout)| {
+                child.overlay(state, layout, renderer, translation)
+            })
+            .collect::<Vec<_>>();
+
+        (!children.is_empty()).then(|| Group::with_children(children).overlay())
+    }
+
     /// tree: Tree{ menu_state, \[item_tree...] }
     ///
     /// layout: Node{inf, \[ slice_node, prescroll, offset_bounds, check_bounds ]}
@@ -411,10 +469,12 @@ where
 
         let menu_state = tree.state.downcast_ref::<MenuState>();
         let slice = &menu_state.slice;
+        let max_item_slice = (self.items.len() - 1).min(slice.end_index);
+        let max_tree_slice = (tree.children.len() - 1).min(slice.end_index);
 
-        self.items[slice.start_index..=slice.end_index]
+        self.items[slice.start_index..=max_item_slice]
             .iter()
-            .zip(tree.children[slice.start_index..=slice.end_index].iter()) // [item_tree...]
+            .zip(tree.children[slice.start_index..=max_tree_slice].iter()) // [item_tree...]
             .zip(slice_layout.children()) // [item_layout...]
             .map(|((item, tree), layout)| {
                 item.mouse_interaction(tree, layout, cursor, viewport, renderer)
@@ -433,7 +493,7 @@ where
         renderer: &mut Renderer,
         theme: &Theme,
         style: &renderer::Style,
-        theme_style: &Theme::Style,
+        theme_style: &Style,
         layout: Layout<'_>,
         mut cursor: mouse::Cursor,
         viewport: &Rectangle,
@@ -447,20 +507,18 @@ where
         let menu_state = tree.state.downcast_ref::<MenuState>();
         let slice = &menu_state.slice;
 
-        let styling = theme.appearance(theme_style);
-
         // debug_draw(renderer, prescroll, check_bounds, offset_bounds);
 
         // draw background
-        let pad_rectangle = pad_rectangle(prescroll, styling.menu_background_expand);
+        let pad_rectangle = pad_rectangle(prescroll, theme_style.menu_background_expand);
         if pad_rectangle.intersects(viewport) {
             renderer.fill_quad(
                 renderer::Quad {
                     bounds: pad_rectangle,
-                    border: styling.menu_border,
-                    shadow: styling.menu_shadow,
+                    border: theme_style.menu_border,
+                    shadow: theme_style.menu_shadow,
                 },
-                styling.menu_background,
+                theme_style.menu_background,
             );
         }
 
@@ -480,10 +538,10 @@ where
                         renderer.fill_quad(
                             renderer::Quad {
                                 bounds: active_bounds,
-                                border: styling.path_border,
+                                border: theme_style.path_border,
                                 ..Default::default()
                             },
-                            styling.path,
+                            theme_style.path,
                         );
                     }
                 }
@@ -630,44 +688,11 @@ where
     }
 }
 
-/* fn debug_draw<Renderer: renderer::Renderer>(
-    renderer: &mut Renderer,
-    prescroll: Rectangle,
-    check_bounds: Rectangle,
-    offset_bounds: Rectangle,
-){
-    [
-        prescroll,
-        check_bounds,
-        offset_bounds,
-    ].iter()
-    .zip([
-        Color::from([1.0, 1.0, 1.0, 0.8]),
-        Color::from([1.0, 0.0, 0.0, 0.1]),
-        Color::from([0.0, 0.0, 1.0, 0.3]),
-    ])
-    .for_each(|(b, c)|{
-        if (b.width > 0.) && (b.height > 0.) {
-            renderer.fill_quad(
-                renderer::Quad{
-                    bounds: *b,
-                    border: Border{
-                        radius: 6.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-                c
-            );
-        }
-    });
-} */
-
 /// Item inside a [`Menu`]
 #[must_use]
 pub struct Item<'a, Message, Theme, Renderer>
 where
-    Theme: StyleSheet,
+    Theme: Catalog,
     Renderer: renderer::Renderer,
     Message: 'a + Clone,
 {
@@ -676,7 +701,7 @@ where
 }
 impl<'a, Message, Theme, Renderer> Item<'a, Message, Theme, Renderer>
 where
-    Theme: StyleSheet,
+    Theme: Catalog,
     Renderer: renderer::Renderer,
     Message: 'a + Clone,
 {
@@ -710,7 +735,7 @@ where
 }
 impl<'a, Message, Theme, Renderer> Item<'a, Message, Theme, Renderer>
 where
-    Theme: StyleSheet,
+    Theme: Catalog,
     Renderer: renderer::Renderer,
     Message: 'a + Clone,
 {
@@ -728,11 +753,10 @@ where
 
     /// out: \[widget_tree, menu_tree]
     pub(super) fn children(&self) -> Vec<Tree> {
-        self.menu
-            .as_ref()
-            .map_or([Tree::new(&self.item)].into(), |m| {
-                [Tree::new(&self.item), m.tree()].into()
-            })
+        self.menu.as_ref().map_or_else(
+            || [Tree::new(&self.item)].into(),
+            |m| [Tree::new(&self.item), m.tree()].into(),
+        )
     }
 
     /// tree: Tree{stateless, \[widget_tree, menu_tree]}
@@ -830,6 +854,31 @@ where
             cursor,
             viewport,
         );
+    }
+
+    pub(super) fn operate(
+        &self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn Operation<()>,
+    ) {
+        self.item
+            .as_widget()
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        self.item
+            .as_widget_mut()
+            .overlay(&mut tree.children[0], layout, renderer, translation)
     }
 }
 

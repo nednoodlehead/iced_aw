@@ -15,13 +15,12 @@ use iced::{
     event, keyboard,
     mouse::{self, Cursor},
     widget::{
-        container, text,
         text::LineHeight,
         text_input::{self, cursor, Value},
-        Column, Container, Row, Text, TextInput,
+        Column, Container, Row, Text,
     },
-    Alignment, Background, Border, Color, Element, Event, Length, Padding, Pixels, Point,
-    Rectangle, Shadow, Size,
+    Alignment, Background, Border, Color, Element, Event, Length, Padding, Point, Rectangle,
+    Shadow, Size,
 };
 use num_traits::{bounds::Bounded, Num, NumAssignOps};
 use std::{
@@ -30,10 +29,14 @@ use std::{
     str::FromStr,
 };
 
-use crate::style;
+use crate::style::{self, Status};
+use crate::widgets::typed_input::TypedInput;
 pub use crate::{
     core::icons::{bootstrap::icon_to_string, Bootstrap, BOOTSTRAP_FONT},
-    style::number_input::{self, Appearance, StyleSheet},
+    style::{
+        number_input::{self, Catalog, Style},
+        StyleFn,
+    },
 };
 
 /// The default padding
@@ -64,10 +67,7 @@ const DEFAULT_PADDING: f32 = 5.0;
 pub struct NumberInput<'a, T, Message, Theme = iced::Theme, Renderer = iced::Renderer>
 where
     Renderer: iced::advanced::text::Renderer<Font = iced::Font>,
-    Theme: number_input::StyleSheet
-        + text_input::StyleSheet
-        + container::StyleSheet
-        + text::StyleSheet,
+    Theme: number_input::ExtendedCatalog,
 {
     /// The current value of the [`NumberInput`].
     value: T,
@@ -78,15 +78,15 @@ where
     /// The max value of the [`NumberInput`].
     max: T,
     /// The content padding of the [`NumberInput`].
-    padding: f32,
+    padding: iced::Padding,
     /// The text size of the [`NumberInput`].
-    size: Option<f32>,
+    size: Option<iced::Pixels>,
     /// The underlying element of the [`NumberInput`].
-    content: TextInput<'a, Message, Theme, Renderer>,
+    content: TypedInput<'a, T, Message, Theme, Renderer>,
     /// The ``on_change`` event of the [`NumberInput`].
     on_change: Box<dyn Fn(T) -> Message>,
     /// The style of the [`NumberInput`].
-    style: <Theme as number_input::StyleSheet>::Style,
+    class: <Theme as style::number_input::Catalog>::Class<'a>,
     /// The font text of the [`NumberInput`].
     font: Renderer::Font,
     /// The Width to use for the ``NumberBox`` Default is ``Length::Fill``
@@ -100,12 +100,9 @@ where
 impl<'a, T, Message, Theme, Renderer> NumberInput<'a, T, Message, Theme, Renderer>
 where
     T: Num + NumAssignOps + PartialOrd + Display + FromStr + Copy + Bounded,
-    Message: Clone,
+    Message: Clone + 'a,
     Renderer: iced::advanced::text::Renderer<Font = iced::Font>,
-    Theme: number_input::StyleSheet
-        + text_input::StyleSheet
-        + container::StyleSheet
-        + text::StyleSheet,
+    Theme: number_input::ExtendedCatalog,
 {
     /// Creates a new [`NumberInput`].
     ///
@@ -114,15 +111,12 @@ where
     /// - the current value
     /// - the max value
     /// - a function that produces a message when the [`NumberInput`] changes
-    pub fn new<F>(value: T, bounds: impl RangeBounds<T>, on_changed: F) -> Self
+    pub fn new<F>(value: T, bounds: impl RangeBounds<T>, on_change: F) -> Self
     where
         F: 'static + Fn(T) -> Message + Copy,
         T: 'static,
     {
-        let padding = DEFAULT_PADDING;
-        let convert_to_num = move |s: String| {
-            on_changed(T::from_str(&s).unwrap_or(if s.is_empty() { T::zero() } else { value }))
-        };
+        let padding = DEFAULT_PADDING.into();
 
         Self {
             value,
@@ -131,12 +125,13 @@ where
             max: Self::set_max(bounds.end_bound()),
             padding,
             size: None,
-            content: TextInput::new("", format!("{value}").as_str())
-                .on_input(convert_to_num)
+            content: TypedInput::new("", &value)
+                .on_input(on_change)
                 .padding(padding)
-                .width(Length::Fixed(127.0)),
-            on_change: Box::new(on_changed),
-            style: <Theme as number_input::StyleSheet>::Style::default(),
+                .width(Length::Fixed(127.0))
+                .class(Theme::default_input()),
+            on_change: Box::new(on_change),
+            class: <Theme as style::number_input::Catalog>::default(),
             font: Renderer::Font::default(),
             width: Length::Shrink,
             ignore_scroll_events: false,
@@ -160,7 +155,7 @@ where
 
     /// Sets the content width of the [`NumberInput`].
     #[must_use]
-    pub fn content_width(mut self, width: Length) -> Self {
+    pub fn content_width(mut self, width: impl Into<Length>) -> Self {
         self.content = self.content.width(width);
         self
     }
@@ -197,21 +192,23 @@ where
     /// focused and the enter key is pressed.
     #[must_use]
     pub fn on_submit(mut self, message: Message) -> Self {
-        self.content = self.content.on_submit(message);
+        self.content = self.content.on_submit(move |_| message.clone());
         self
     }
 
     /// Sets the padding of the [`NumberInput`].
     #[must_use]
-    pub fn padding(mut self, units: f32) -> Self {
-        self.padding = units;
-        self.content = self.content.padding(units);
+    pub fn padding(mut self, padding: impl Into<iced::Padding>) -> Self {
+        let padding = padding.into();
+        self.padding = padding;
+        self.content = self.content.padding(padding);
         self
     }
 
     /// Sets the text size of the [`NumberInput`].
     #[must_use]
-    pub fn size(mut self, size: f32) -> Self {
+    pub fn size(mut self, size: impl Into<iced::Pixels>) -> Self {
+        let size = size.into();
         self.size = Some(size);
         self.content = self.content.size(size);
         self
@@ -226,8 +223,11 @@ where
 
     /// Sets the style of the [`NumberInput`].
     #[must_use]
-    pub fn style(mut self, style: impl Into<<Theme as number_input::StyleSheet>::Style>) -> Self {
-        self.style = style.into();
+    pub fn style(mut self, style: impl Fn(&Theme, Status) -> Style + 'a) -> Self
+    where
+        <Theme as style::number_input::Catalog>::Class<'a>: From<StyleFn<'a, Theme, Style>>,
+    {
+        self.class = (Box::new(style) as StyleFn<'a, Theme, Style>).into();
         self
     }
 
@@ -273,6 +273,29 @@ where
             Bound::Unbounded => T::max_value(),
         }
     }
+
+    /// Sets the style of the input of the [`NumberInput`].
+    #[must_use]
+    pub fn input_style(
+        mut self,
+        style: impl Fn(&Theme, text_input::Status) -> text_input::Style + 'a,
+    ) -> Self
+    where
+        <Theme as text_input::Catalog>::Class<'a>: From<text_input::StyleFn<'a, Theme>>,
+    {
+        self.content = self.content.style(style);
+        self
+    }
+
+    /// Sets the class of the input of the [`NumberInput`].
+    #[must_use]
+    pub fn class(
+        mut self,
+        class: impl Into<<Theme as style::number_input::Catalog>::Class<'a>>,
+    ) -> Self {
+        self.class = class.into();
+        self
+    }
 }
 
 impl<'a, T, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
@@ -281,10 +304,7 @@ where
     T: Num + NumAssignOps + PartialOrd + Display + FromStr + ToString + Copy + Bounded,
     Message: 'a + Clone,
     Renderer: 'a + iced::advanced::text::Renderer<Font = iced::Font>,
-    Theme: number_input::StyleSheet
-        + text_input::StyleSheet
-        + container::StyleSheet
-        + text::StyleSheet,
+    Theme: number_input::ExtendedCatalog,
 {
     fn tag(&self) -> Tag {
         Tag::of::<ModifierState>()
@@ -318,26 +338,30 @@ where
     }
 
     fn layout(&self, tree: &mut Tree, renderer: &Renderer, limits: &Limits) -> Node {
-        let padding = Padding::from(self.padding);
         let num_size = self.size();
         let limits = limits
             .width(num_size.width)
             .height(Length::Shrink)
-            .shrink(padding);
+            .shrink(self.padding);
         let content = self
             .content
-            .layout(&mut tree.children[0], renderer, &limits, None);
+            .layout(&mut tree.children[0], renderer, &limits);
         let limits2 = Limits::new(Size::new(0.0, 0.0), content.size());
-        let txt_size = self.size.unwrap_or_else(|| renderer.default_size().0);
+        let txt_size = self.size.unwrap_or_else(|| renderer.default_size());
 
         let icon_size = txt_size * 2.5 / 4.0;
         let btn_mod = |c| {
             Container::<Message, Theme, Renderer>::new(Text::new(format!(" {c} ")).size(icon_size))
-                .center_y()
-                .center_x()
+                .center_y(Length::Shrink)
+                .center_x(Length::Shrink)
         };
 
-        let element = if self.padding < DEFAULT_PADDING {
+        let default_padding = Padding::from(DEFAULT_PADDING);
+
+        let element = if self.padding.top < default_padding.top
+            || self.padding.bottom < default_padding.bottom
+            || self.padding.right < default_padding.right
+        {
             Element::new(
                 Row::<Message, Theme, Renderer>::new()
                     .spacing(1)
@@ -382,7 +406,7 @@ where
         tree: &mut Tree,
         layout: Layout<'_>,
         renderer: &Renderer,
-        operation: &mut dyn Operation<Message>,
+        operation: &mut dyn Operation<()>,
     ) {
         operation.container(None, layout.bounds(), &mut |operation| {
             self.content.operate(
@@ -421,7 +445,7 @@ where
             .bounds();
         let dec_bounds = mod_children
             .next()
-            .expect("fail to get decreate mod layout")
+            .expect("fail to get decrease mod layout")
             .bounds();
 
         if self.min == self.max {
@@ -440,6 +464,8 @@ where
             .downcast_mut::<text_input::State<Renderer::Paragraph>>();
         let modifiers = state.state.downcast_mut::<ModifierState>();
 
+        let current_text = self.content.text().to_owned();
+
         let mut forward_to_text = |event, shell, child, clipboard| {
             self.content.on_event(
                 child, event, content, cursor, renderer, clipboard, shell, viewport,
@@ -451,95 +477,113 @@ where
                 if !text_input.is_focused() {
                     return event::Status::Ignored;
                 }
-                let (key, modifiers) = match ke {
-                    keyboard::Event::KeyPressed { key, modifiers, .. } => (key, modifiers),
+                let (key, text) = match ke {
+                    keyboard::Event::KeyPressed { key, text, .. } => (key, text),
                     keyboard::Event::ModifiersChanged(_) => {
                         return forward_to_text(event, shell, child, clipboard)
                     }
                     keyboard::Event::KeyReleased { .. } => return event::Status::Ignored,
                 };
-
-                match key {
-                    keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
-                        self.decrease_value(shell);
-                        event::Status::Captured
-                    }
-                    keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
-                        self.increase_value(shell);
-                        event::Status::Captured
-                    }
-                    keyboard::Key::Named(
-                        keyboard::key::Named::ArrowLeft | keyboard::key::Named::ArrowRight,
-                    ) => forward_to_text(event, shell, child, clipboard),
-                    keyboard::Key::Named(keyboard::key::Named::Backspace)
-                        if !T::zero().eq(&self.value) =>
-                    {
-                        let mut new_val = self.value.to_string();
-                        match text_input.cursor().state(&Value::new(&new_val)) {
-                            cursor::State::Index(idx) if idx >= 1 && idx <= new_val.len() => {
-                                _ = new_val.remove(idx - 1);
+                match text {
+                    Some(text) => {
+                        if text == "\u{1}" || text == "\u{3}" {
+                            // CTRL + a and CTRL + c
+                            forward_to_text(event, shell, child, clipboard)
+                        } else if text == "\u{8}" {
+                            // Backspace
+                            if current_text == T::zero().to_string() {
+                                return event::Status::Ignored;
                             }
-                            cursor::State::Selection { start, end }
-                                if start <= new_val.len() && end <= new_val.len() =>
-                            {
-                                new_val.replace_range(start.min(end)..start.max(end), "");
+                            let mut new_val = current_text;
+                            match text_input.cursor().state(&Value::new(&new_val)) {
+                                cursor::State::Index(idx) if idx >= 1 && idx <= new_val.len() => {
+                                    _ = new_val.remove(idx - 1);
+                                }
+                                cursor::State::Selection { start, end }
+                                    if start <= new_val.len() && end <= new_val.len() =>
+                                {
+                                    new_val.replace_range(start.min(end)..start.max(end), "");
+                                }
+                                _ => return event::Status::Ignored,
                             }
-                            _ => return event::Status::Ignored,
-                        }
 
-                        if new_val.is_empty() {
-                            new_val = T::zero().to_string();
-                        }
-
-                        match T::from_str(&new_val) {
-                            Ok(val) if (self.min..self.max).contains(&val) && val != self.value => {
-                                self.value = val;
-                                forward_to_text(event, shell, child, clipboard)
+                            if new_val.is_empty() {
+                                new_val = T::zero().to_string();
                             }
-                            Ok(_) => event::Status::Captured,
-                            _ => event::Status::Ignored,
-                        }
-                    }
-                    keyboard::Key::Named(_) | keyboard::Key::Unidentified => event::Status::Ignored,
-                    keyboard::Key::Character(c) => {
-                        if modifiers.command() && matches!(c.as_ref(), "a" | "c") {
-                            return forward_to_text(event, shell, child, clipboard);
-                        }
 
-                        let input = if modifiers.command() && c.as_ref() == "v" {
-                            match clipboard.read(iced::advanced::clipboard::Kind::Standard) {
-                                Some(paste) => paste,
-                                None => return event::Status::Ignored,
+                            match T::from_str(&new_val) {
+                                Ok(val)
+                                    if val >= self.min && val <= self.max && val != self.value =>
+                                {
+                                    self.value = val;
+                                    forward_to_text(event, shell, child, clipboard)
+                                }
+                                Ok(val) if val >= self.min && val <= self.max => {
+                                    forward_to_text(event, shell, child, clipboard)
+                                }
+                                Ok(_) => event::Status::Captured,
+                                _ => event::Status::Ignored,
                             }
-                        } else if c.parse::<i64>().is_err() && c != "-" {
-                            return event::Status::Ignored;
                         } else {
-                            c.to_string()
-                        };
-                        let input = input.trim();
+                            let input = if text == "\u{16}" {
+                                // CTRL + v
+                                match clipboard.read(iced::advanced::clipboard::Kind::Standard) {
+                                    Some(paste) => paste,
+                                    None => return event::Status::Ignored,
+                                }
+                            } else if text.parse::<i64>().is_err() && text != "-" && text != "." {
+                                return event::Status::Ignored;
+                            } else {
+                                text.to_string()
+                            };
 
-                        let mut new_val = self.value.to_string();
-                        match text_input.cursor().state(&Value::new(&new_val)) {
-                            cursor::State::Index(idx) if idx <= new_val.len() => {
-                                new_val.insert_str(idx, input);
-                            }
-                            cursor::State::Selection { start, end }
-                                if start <= new_val.len() && end <= new_val.len() =>
-                            {
-                                new_val.replace_range(start.min(end)..end.max(start), input);
-                            }
-                            _ => return event::Status::Ignored,
-                        }
+                            let input = input.trim();
 
-                        match T::from_str(&new_val) {
-                            Ok(val) if (self.min..self.max).contains(&val) && val != self.value => {
-                                self.value = val;
-                                forward_to_text(event, shell, child, clipboard)
+                            let mut new_val = current_text;
+                            match text_input.cursor().state(&Value::new(&new_val)) {
+                                cursor::State::Index(idx) if idx <= new_val.len() => {
+                                    new_val.insert_str(idx, input);
+                                }
+                                cursor::State::Selection { start, end }
+                                    if start <= new_val.len() && end <= new_val.len() =>
+                                {
+                                    new_val.replace_range(start.min(end)..end.max(start), input);
+                                }
+                                _ => return event::Status::Ignored,
                             }
-                            Ok(_) => event::Status::Captured,
-                            _ => event::Status::Ignored,
+
+                            match T::from_str(&new_val) {
+                                Ok(val)
+                                    if val >= self.min && val <= self.max && val != self.value =>
+                                {
+                                    self.value = val;
+                                    forward_to_text(event, shell, child, clipboard)
+                                }
+                                Ok(val) if val >= self.min && val <= self.max => {
+                                    forward_to_text(event, shell, child, clipboard)
+                                }
+                                Ok(_) => event::Status::Captured,
+                                _ => event::Status::Ignored,
+                            }
                         }
                     }
+                    None => match key {
+                        keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
+                            self.decrease_value(shell);
+                            event::Status::Captured
+                        }
+                        keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
+                            self.increase_value(shell);
+                            event::Status::Captured
+                        }
+                        keyboard::Key::Named(
+                            keyboard::key::Named::ArrowLeft
+                            | keyboard::key::Named::ArrowRight
+                            | keyboard::key::Named::Home
+                            | keyboard::key::Named::End,
+                        ) => forward_to_text(event, shell, child, clipboard),
+                        _ => event::Status::Ignored,
+                    },
                 }
             }
             Event::Mouse(mouse::Event::WheelScrolled { delta })
@@ -603,7 +647,7 @@ where
             .bounds();
         let dec_bounds = mod_children
             .next()
-            .expect("fail to get decreate mod layout")
+            .expect("fail to get decrease mod layout")
             .bounds();
         let is_mouse_over = bounds.contains(cursor.position().unwrap_or_default());
         let is_decrease_disabled = self.value <= self.min || self.min == self.max;
@@ -628,7 +672,7 @@ where
         state: &Tree,
         renderer: &mut Renderer,
         theme: &Theme,
-        _style: &renderer::Style,
+        style: &renderer::Style,
         layout: Layout<'_>,
         cursor: Cursor,
         viewport: &Rectangle,
@@ -645,40 +689,39 @@ where
             .bounds();
         let dec_bounds = mod_children
             .next()
-            .expect("fail to get decreate mod layout")
+            .expect("fail to get decrease mod layout")
             .bounds();
         self.content.draw(
             &state.children[0],
             renderer,
             theme,
+            style,
             content_layout,
             cursor,
-            None,
             viewport,
         );
         let is_decrease_disabled = self.value <= self.min || self.min == self.max;
         let is_increase_disabled = self.value >= self.max || self.min == self.max;
 
         let decrease_btn_style = if is_decrease_disabled {
-            style::number_input::StyleSheet::disabled(theme, &self.style)
-            //theme.disabled(&self.style)
+            style::number_input::Catalog::style(theme, &self.class, Status::Disabled)
         } else if state.state.downcast_ref::<ModifierState>().decrease_pressed {
-            style::number_input::StyleSheet::pressed(theme, &self.style)
+            style::number_input::Catalog::style(theme, &self.class, Status::Pressed)
         } else {
-            style::number_input::StyleSheet::active(theme, &self.style)
+            style::number_input::Catalog::style(theme, &self.class, Status::Active)
         };
 
         let increase_btn_style = if is_increase_disabled {
-            style::number_input::StyleSheet::disabled(theme, &self.style)
+            style::number_input::Catalog::style(theme, &self.class, Status::Disabled)
         } else if state.state.downcast_ref::<ModifierState>().increase_pressed {
-            style::number_input::StyleSheet::pressed(theme, &self.style)
+            style::number_input::Catalog::style(theme, &self.class, Status::Pressed)
         } else {
-            style::number_input::StyleSheet::active(theme, &self.style)
+            style::number_input::Catalog::style(theme, &self.class, Status::Active)
         };
 
-        let txt_size = self.size.unwrap_or_else(|| renderer.default_size().0);
+        let txt_size = self.size.unwrap_or_else(|| renderer.default_size());
 
-        let icon_size = Pixels(txt_size * 2.5 / 4.0);
+        let icon_size = txt_size * 2.5 / 4.0;
 
         if self.ignore_buttons {
             return;
@@ -703,7 +746,7 @@ where
 
         renderer.fill_text(
             iced::advanced::text::Text {
-                content: &icon_to_string(Bootstrap::CaretDownFill),
+                content: icon_to_string(Bootstrap::CaretDownFill),
                 bounds: Size::new(dec_bounds.width, dec_bounds.height),
                 size: icon_size,
                 font: BOOTSTRAP_FONT,
@@ -737,7 +780,7 @@ where
 
         renderer.fill_text(
             iced::advanced::text::Text {
-                content: &icon_to_string(Bootstrap::CaretUpFill),
+                content: icon_to_string(Bootstrap::CaretUpFill),
                 bounds: Size::new(inc_bounds.width, inc_bounds.height),
                 size: icon_size,
                 font: BOOTSTRAP_FONT,
@@ -768,11 +811,7 @@ where
     T: 'a + Num + NumAssignOps + PartialOrd + Display + FromStr + Copy + Bounded,
     Message: 'a + Clone,
     Renderer: 'a + iced::advanced::text::Renderer<Font = iced::Font>,
-    Theme: 'a
-        + number_input::StyleSheet
-        + text_input::StyleSheet
-        + container::StyleSheet
-        + text::StyleSheet,
+    Theme: 'a + number_input::ExtendedCatalog,
 {
     fn from(num_input: NumberInput<'a, T, Message, Theme, Renderer>) -> Self {
         Element::new(num_input)
