@@ -71,7 +71,7 @@ once_cell = { version = "1.19.0", optional = true }
 [dependencies.iced]
 git = "https://github.com/iced-rs/iced.git"
 #rev = "b474a2b7a763dcde6a377cb409001a7b5285ee8d"
-version = "0.13.0-dev"
+version = "0.13.0"
 default-features = false
 features = ["advanced"]
 
